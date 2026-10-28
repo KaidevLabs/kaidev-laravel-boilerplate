@@ -1,0 +1,249 @@
+name: Auto Merge
+
+# Arms GitHub's native auto-merge on any non-draft PR targeting `dev` or
+# `main`. The branch RULESET is the single source of truth for gating --
+# required checks, required approvals, and resolved threads are all enforced
+# by GitHub, not re-checked here. This workflow's only job is to pick the
+# merge method from the base branch and arm auto-merge; GitHub merges the
+# moment the ruleset is satisfied.
+#
+#   - dev  -> squash
+#   - main -> merge commit
+#
+# Comment commands on a PR:
+#   - /merge        re-arm auto-merge (admin/maintainer)
+#   - /merge-force  merge immediately, bypassing the ruleset (admin only)
+#
+# Triggers:
+#   - pull_request: opened / synchronize / ready_for_review / reopened
+#   - pull_request_review: submitted   (re-arms if auto-merge was cleared)
+#   - issue_comment: /merge or /merge-force comment (manual re-trigger)
+#   - workflow_dispatch: PR number input (manual re-trigger from Actions tab)
+on:
+  pull_request:
+    branches: ['dev', 'main']
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to evaluate'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Per-PR group so different PRs evaluate in parallel; stale evaluations for
+  # the same PR are cancelled by newer ones.
+  group: auto-merge-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number || 'adhoc' }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    # Exact commands only: '/merge' or '/merge-force', optionally followed by
+    # args (space-separated). Prefix matching is intentionally NOT used, so
+    # lookalikes such as '/mergeforce' never even start the job; the resolver
+    # below re-checks the first word exactly before acting.
+    if: |
+      github.event_name != 'issue_comment' ||
+      (github.event_name == 'issue_comment' && github.event.action == 'created' &&
+        (github.event.comment.body == '/merge' ||
+         github.event.comment.body == '/merge-force' ||
+         startsWith(github.event.comment.body, '/merge ') ||
+         startsWith(github.event.comment.body, '/merge-force ')))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR number(s) to evaluate
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR_INPUT: ${{ inputs.pr_number }}
+        run: |
+          set +e -uo pipefail
+          nums=""
+          force=0
+          case "$EVENT" in
+            pull_request|pull_request_review)
+              nums=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
+              ;;
+            issue_comment)
+              # Only comments on PRs (not issues).
+              is_pr=$(jq -r '.issue.pull_request != null' "$GITHUB_EVENT_PATH")
+              if [ "$is_pr" != "true" ]; then
+                echo "Comment not on a PR; skip."
+                echo "nums=" >> "$GITHUB_OUTPUT"
+                echo "force=0" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              cmd=$(jq -r '.comment.body' "$GITHUB_EVENT_PATH" | awk '{print $1}')
+              commenter=$(jq -r '.comment.user.login' "$GITHUB_EVENT_PATH")
+              perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$commenter/permission" --jq .permission 2>/dev/null || echo none)
+              case "$cmd" in
+                /merge-force)
+                  case "$perm" in
+                    admin) echo "Admin force-merge requested by $commenter."; nums=$(jq -r '.issue.number' "$GITHUB_EVENT_PATH"); force=1 ;;
+                    *) echo "Only admins can force-merge. $commenter is $perm; skip." ;;
+                  esac
+                  ;;
+                /merge)
+                  case "$perm" in
+                    admin|maintain) nums=$(jq -r '.issue.number' "$GITHUB_EVENT_PATH") ;;
+                    *) echo "Commenter $commenter ($perm) not authorised to run '$cmd'; skip." ;;
+                  esac
+                  ;;
+                *) echo "Not a recognised merge command ($cmd); skip." ;;
+              esac
+              ;;
+            workflow_dispatch)
+              nums="$PR_INPUT"
+              [[ "$nums" =~ ^[0-9]+$ ]] || { echo "Invalid pr_number input '$nums'."; nums=""; }
+              ;;
+          esac
+          echo "Resolved PRs: ${nums:-<none>} (force=$force)"
+          echo "nums=$nums" >> "$GITHUB_OUTPUT"
+          echo "force=$force" >> "$GITHUB_OUTPUT"
+
+      - name: Arm auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NUMS: ${{ steps.pr.outputs.nums }}
+          FORCE: ${{ steps.pr.outputs.force }}
+          # Optional admin token for /merge-force to bypass branch protection.
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+        run: |
+          set +e -uo pipefail
+
+          # Post a PR comment only if one with the same marker doesn't already exist.
+          post_once() {
+            local pr="$1" marker="$2" body="$3"
+            if gh pr view "$pr" --json comments --jq '.comments[].body' 2>/dev/null \
+               | grep -q "<!-- auto-merge:$marker -->"; then
+              return 0
+            fi
+            gh pr comment "$pr" --body "<!-- auto-merge:$marker -->
+          $body" 2>/dev/null || true
+          }
+
+          evaluate() {
+            local pr="$1" force="${2:-0}"
+            echo "::group::PR #$pr"
+            local base headref state isdraft method
+            base=$(gh pr view "$pr" --json baseRefName --jq .baseRefName)
+            case "$base" in
+              dev)  method=squash ;;
+              main) method=merge ;;
+              *)    echo "Base '$base' not managed by auto-merge; skip."; echo "::endgroup::"; return 0 ;;
+            esac
+
+            state=$(gh pr view "$pr" --json state,isDraft --jq '[.state,.isDraft]|@tsv')
+            read -r state isdraft <<< "$state"
+            [ "$state" = "OPEN" ] || { echo "PR is $state; skip."; echo "::endgroup::"; return 0; }
+            [ "$isdraft" = "false" ] || { echo "Draft; skip."; echo "::endgroup::"; return 0; }
+
+            headref=$(gh pr view "$pr" --json headRefName --jq .headRefName)
+            local del=""
+            case "$headref" in dev|main) ;; *) del="--delete-branch" ;; esac
+
+            # Read the ruleset config once, purely so the intro is informative
+            # (it is NOT used for gating -- the ruleset itself enforces it).
+            local appr reqchecks am_on warn=""
+            appr=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/$base" \
+                   --jq '[.[]|select(.type=="pull_request")|(.parameters.required_approving_review_count // 0)]|(if length>0 then max else 0 end)' 2>/dev/null)
+            reqchecks=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/$base" \
+                   --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]|join(", ")' 2>/dev/null)
+            am_on=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.allow_auto_merge' 2>/dev/null)
+            [ "$am_on" = "true" ] || warn="> ⚠️ **Auto-merge is disabled on this repo** (\`allow_auto_merge: false\`) — no PR can be armed until an admin enables it (Settings → General → Pull Requests)."$'\n\n'
+
+            # Post an intro summary once per managed PR.
+            post_once "$pr" "intro" "${warn}🤖 **Auto Merge** (base: \`$base\` → \`$method\`)
+
+          This PR will be armed for GitHub auto-merge, which merges automatically once the \`$base\` ruleset is satisfied:
+          - approvals required: **${appr:-0}**
+          - required checks: ${reqchecks:-none}
+          - review threads resolved
+
+          Comments: \`/merge\` to re-arm (admin/maintainer), \`/merge-force\` to merge now, bypassing the ruleset (admin only)."
+
+            # Admin force-merge: bypass the ruleset and merge immediately.
+            if [ "$force" = "1" ]; then
+              echo "Admin force-merge requested; bypassing ruleset."
+              local rc=0 out
+              if [ -n "$ADMIN_TOKEN" ]; then
+                out=$(GH_TOKEN="$ADMIN_TOKEN" gh pr merge "$pr" --"$method" $del --admin 2>&1) || rc=$?
+              else
+                out=$(gh pr merge "$pr" --"$method" $del --admin 2>&1) || rc=$?
+              fi
+              if [ "$rc" -eq 0 ]; then
+                echo "✅ Force-merged PR #$pr ($method)."
+              else
+                echo "❌ Admin force-merge failed. Resolve the issue and comment /merge-force to retry."
+                post_once "$pr" "merge-failed" "❌ Admin force-merge failed. Resolve the issue and comment \`/merge-force\` to retry."
+              fi
+              echo "::endgroup::"; return 0
+            fi
+
+            # Skip cross-repo (fork) PRs unless an admin force-merges.
+            if [ "$(gh pr view "$pr" --json isCrossRepository --jq .isCrossRepository 2>/dev/null)" = "true" ]; then
+              echo "Cross-repo (fork) PR; not auto-merging (supply-chain safety)."
+              post_once "$pr" "fork" "⚠️ Auto-merge skipped: this is a forked (cross-repo) PR. An admin can use \`/merge-force\`."
+              echo "::endgroup::"; return 0
+            fi
+
+            # Mergeability: conflicts need manual resolution; a behind branch is
+            # updated (strict rulesets require the head to be up to date).
+            local mss
+            mss=$(gh pr view "$pr" --json mergeStateStatus --jq .mergeStateStatus)
+            case "$mss" in
+              DIRTY)
+                echo "Conflicts; needs manual resolution."
+                post_once "$pr" "conflict" "⚠️ Auto-merge is blocked: this PR has merge conflicts. Resolve them and push, or comment \`/merge\`."
+                echo "::endgroup::"; return 0
+                ;;
+              BEHIND)
+                echo "Head is behind base; updating branch."
+                if gh pr update-branch "$pr" --merge 2>/dev/null; then
+                  echo "Branch updated; synchronize will re-trigger."
+                else
+                  post_once "$pr" "behind" "⚠️ Auto-merge could not update this branch (behind base). Update it manually, then comment \`/merge\`."
+                fi
+                echo "::endgroup::"; return 0
+                ;;
+              UNKNOWN)
+                echo "Merge state unknown (GitHub computing); will retry on next event."
+                echo "::endgroup::"; return 0
+                ;;
+            esac
+
+            # Arm GitHub auto-merge. The ruleset is the gatekeeper from here.
+            if [ "$(gh pr view "$pr" --json autoMergeRequest --jq '.autoMergeRequest != null' 2>/dev/null)" = "true" ]; then
+              echo "Auto-merge already armed for PR #$pr."
+              echo "::endgroup::"; return 0
+            fi
+            echo "Arming auto-merge with method '$method'."
+            local err
+            if err=$(gh pr merge "$pr" --auto --"$method" $del 2>&1); then
+              echo "✅ Auto-merge armed for PR #$pr ($method); GitHub will merge when the ruleset is satisfied."
+            else
+              echo "❌ Could not arm auto-merge: $err"
+              post_once "$pr" "merge-failed" "❌ Auto-merge could not be armed. Resolve the issue and comment \`/merge\` to retry."
+            fi
+            echo "::endgroup::"
+          }
+
+          [ -n "$NUMS" ] || { echo "No PRs to evaluate."; exit 0; }
+          for n in $NUMS; do
+            evaluate "$n" "$FORCE" || true
+          done
