@@ -1,4 +1,4 @@
-name: Pest Tests
+name: Pest
 
 # Tests run on SQLite :memory: (see phpunit.xml), so this workflow needs no
 # database or Redis service and no per-worker database for --parallel.
@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 jobs:
-  pest-tests:
+  pest:
     if: ${{ !github.event.pull_request.draft }}
     name: Pest Tests
     runs-on: ubuntu-latest
