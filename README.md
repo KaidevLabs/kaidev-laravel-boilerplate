@@ -214,14 +214,14 @@ repo pasó a privado: párate y avísame. Si aparece un 403 por rate limit, aña
 Cada ecosistema se llama con su propia herramienta. Los scripts de Composer del
 starter no se usan.
 
-| Qué                      | Comando                                                                |
-| ------------------------ | ---------------------------------------------------------------------- |
-| Estándar de PHP          | `./vendor/bin/duster lint` / `./vendor/bin/duster fix`                 |
-| Tests                    | `sail test --parallel`                                                 |
-| Formato y lint del front | `npm run check` / `npm run check:fix`                                  |
-| Tipos del front          | `npm run types:check`                                                  |
-| Build                    | `npm run build`                                                        |
-| Servidor de desarrollo   | `composer dev` (arranca `php artisan dev`, que ya lanza `npm run dev`) |
+| Qué                      | Comando                                                         |
+| ------------------------ | --------------------------------------------------------------- |
+| Estándar de PHP          | `./vendor/bin/duster lint` / `./vendor/bin/duster fix`          |
+| Tests                    | `sail test --parallel`                                          |
+| Formato y lint del front | `npm run check` / `npm run check:fix`                           |
+| Tipos del front          | `npm run types:check`                                           |
+| Build                    | `npm run build`                                                 |
+| Servidor de desarrollo   | `php artisan dev` (lanza servidor, colas, logs y `npm run dev`) |
 
 Composer queda para lo suyo: instalar dependencias (`composer install`,
 `composer require`) y su ciclo de vida (`post-update-cmd` → `boost:update`).
