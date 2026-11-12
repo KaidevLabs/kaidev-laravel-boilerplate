@@ -65,8 +65,9 @@ Base: `laravel new` con el starter de Svelte e Inertia.
    parte del diff del primer commit.
 3. **Duster** — añadido a `require-dev` y ejecutado. `pint.json` está en preset
    `laravel`.
-4. **Scripts de npm alineados** con lo que ejecutan los workflows: `npm run
-   check` (`vp check` = formato + lint) y `npm run types:check` (`svelte-check`).
+4. **Scripts de npm alineados** con lo que ejecutan los workflows:
+   `npm run check` (`vp check` = formato + lint) y `npm run types:check`
+   (`svelte-check`).
 5. **`.nvmrc` con Node 26** — la versión de referencia, la misma que fijan los
    workflows. Cópialo en los proyectos nuevos (paso 1).
 6. **Laravel Sail** — `compose.yaml` usa PHP 8.5, MySQL 8.4 y Node 26 para que
@@ -149,17 +150,41 @@ El hook corre las comprobaciones al hacer push. Para omitirlas puntualmente,
 añade `SKIP_PRE_PUSH=true` al `.env` local y quítalo después; no lo pongas en
 `.env.example`.
 
-### 3. Instalar los requisitos que el starter no trae
+### 3. Requisitos del PHP y del front
 
-**Duster** (PHP):
+**Duster** (PHP): no viene en el starter, hay que instalarlo:
 
 ```bash
 ./vendor/bin/sail composer require --dev tightenco/duster
 ```
 
-**vite-plus** (front): el starter actual de Svelte ya lo incluye (`vp` en
-`package.json` y `vite.config.ts`). Un Laravel clásico, en cambio, trae `vite` +
-`eslint` + `prettier` y hay que migrarlo:
+**vite-plus** (front): no hace falta instalarlo. Desde 2026-08-28, los starters
+oficiales de Laravel 13 (Svelte, Vue, React y Livewire) se migraron a vite-plus,
+así que ya traen `vite-plus` en `devDependencies` y `vp` en `package.json`. El
+`vite.config.ts` usa `defineConfig` de `vite-plus`.
+
+Qué scripts trae cada starter:
+
+| Starter                        | `check`    | `check:fix`      | `types:check`  |
+| ------------------------------ | ---------- | ---------------- | -------------- |
+| Svelte                         | `vp check` | `vp check --fix` | `svelte-check` |
+| Vue                            | `vp check` | `vp check --fix` | `vue-tsc`      |
+| React                          | `vp check` | `vp check --fix` | `tsc`          |
+| Livewire                       | —          | —                | —              |
+| Blade puro (`laravel/laravel`) | —          | —                | —              |
+
+- `check` = `vp check`: formato (oxfmt) y lint (oxlint). `check:fix` =
+  `vp check --fix`.
+- `types:check` es el type-check del framework. Va aparte: `vp check` no hace
+  type-check, porque el starter solo enciende `typeAware` (reglas de lint que
+  usan tipos), no `typeCheck` (el chequeo completo).
+- Livewire trae `vite-plus` pero **no** define `check` ni `types:check`. Blade
+  puro (`laravel/laravel`) no trae ni `vite-plus` ni esos scripts. Si el proyecto
+  los necesita, añádelos al `package.json`; si no, el hook pre-push fallará (ver
+  aviso abajo).
+
+Si el proyecto no trae vite-plus (por ejemplo, un `laravel/laravel` con Blade
+puro), instálalo y migra:
 
 ```bash
 ./vendor/bin/sail npm install -D vite-plus
@@ -170,6 +195,14 @@ Ojo: `vp migrate` genera un `vite.config.ts` nuevo con los valores por defecto
 del starter, o sea `tabWidth: 4`. **Después de migrar hay que volver a poner
 `fmt.tabWidth: 2`.** El comando también escribe ficheros de editor, de agentes y
 hooks de git; si no los quieres, pasa `--no-agent --no-editor --no-hooks`.
+
+**Aviso sobre los scripts del front**: el hook `scripts/pre-push.sh` ejecuta
+`npm run check`, `npm run types:check` y `npm run build`, y los workflows
+`front-lint.yml` y `pest.yml` ejecutan `check`, `types:check` y `build`
+respectivamente, sin comprobar si esos scripts existen. En un proyecto que no los
+defina (Livewire o Blade puro), el hook falla y bloquea los pushes, y el CI se
+pone en rojo. Para ese caso, define los scripts en `package.json` o añade
+`SKIP_PRE_PUSH=true` al `.env` local (el CI siempre los necesita).
 
 ### 4. Primera pasada (una sola vez por proyecto)
 
@@ -339,8 +372,15 @@ Corre el front de punta a punta:
 - `npm run check` → `vp check`: formato (oxfmt) y lint (oxlint). El
   `vite.config.ts` fija `denyWarnings: true`, así que **un warning rompe el
   build**, igual que un error.
-- `npm run types:check` → `svelte-check`. Va aparte a propósito: `vp check` no
-  type-checkea ficheros `.svelte`.
+- `npm run types:check` → `svelte-check`: hace el type-check real. `vp check`
+  **no** type-checkea porque el `vite.config.ts` del starter solo activa
+  `lint.options.typeAware` (reglas de lint que usan tipos), no
+  `lint.options.typeCheck` (la opción que habilita el chequeo de tipos). Y aunque
+  se activara, `vp check` no cubre los ficheros `.svelte`.
+
+Si quieres que `vp check` haga también el chequeo de tipos, añade
+`typeCheck: true` a `lint.options` en `vite.config.ts`. En Svelte seguirás
+necesitando `svelte-check` para los ficheros `.svelte`.
 
 Necesita PHP aunque sea un workflow de front, porque genera antes las rutas de
 Wayfinder (`php artisan wayfinder:generate` en GitHub Actions; localmente usa
