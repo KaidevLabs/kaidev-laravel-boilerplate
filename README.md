@@ -348,8 +348,11 @@ puede seguir rojo.
 
 ## Los workflows
 
-GitHub muestra cada check como `workflow / job`. Éstos son los nombres exactos,
-que son los que hay que declarar como requeridos en los rulesets:
+GitHub muestra cada check como `workflow / job`. Ésos son los nombres que ves en
+la UI, pero el `context` que guarda el ruleset es **solo el nombre del job**:
+`front-lint`, `duster-lint`, `Pest Tests` y `auto-merge`. Si declaras el nombre
+completo con el workflow, el ruleset nunca se satisface y los PRs se quedan
+bloqueados.
 
 Los comandos de esta sección son los que ejecutan los workflows en GitHub
 Actions. En local, ejecuta las comprobaciones con Sail como se indica arriba.
@@ -424,9 +427,45 @@ Ninguno de estos workflows funciona del todo sin esto:
 
 1. **Settings → General → Pull Requests → Allow auto-merge.** Sin esto no se
    puede armar ningún auto-merge; el workflow lo detecta y lo avisa en el PR.
-2. **Rulesets en `dev` y `main`** con los checks requeridos, usando los nombres
-   exactos de la tabla de arriba. Ojo: si renombras un workflow o un job, el
-   check cambia de nombre y el ruleset deja de reconocerlo.
+2. **Importar el ruleset de `dev` y `main`** en cada proyecto. La definición vive
+   una sola vez, en este boilerplate: manda el ruleset de su UI y
+   `.github/rulesets/default.json` es su export versionado, que está aquí solo
+   para poder importarlo cómodamente. En el proyecto destino **no** se copia el
+   archivo: se importa y se acabó. GitHub no lee rulesets desde el repo —no hay
+   rulesets-as-code—, así que el import es manual, una vez por repo:
+
+   - **UI**: Settings → Rules → Rulesets → New ruleset → Import a ruleset, y
+     seleccionar `.github/rulesets/default.json` del clon del boilerplate.
+
+   - **API**, desde un clon del boilerplate (el repo destino tiene que existir ya
+     en GitHub):
+
+     ```bash
+     gh api --method POST repos/{owner}/{repo}/rulesets --input .github/rulesets/default.json
+     ```
+
+     Necesita permiso `Administration: write` sobre el repo destino.
+
+   Notas:
+
+   - `id`, `source_type` y `source` describen la instancia del boilerplate y
+     GitHub los ignora o sobrescribe al importar, así que viajan sin problema.
+     `integration_id: 15368` es la app de GitHub Actions: mantiene el check atado
+     a Actions, no lo quites.
+   - Si el proyecto todavía no tiene la rama `dev`, la regla se aplica en cuanto
+     exista; no hay que editar el archivo.
+   - Si renombras un workflow o un job, el check cambia de nombre y el ruleset
+     deja de reconocerlo: el `context` es solo el nombre del job, como explica la
+     sección "Los workflows".
+
+   El gating se cambia en el boilerplate, no en cada proyecto: editas el ruleset
+   en su UI, lo exportas, lo commiteas y lo replicas a mano donde haga falta. Un
+   cambio hecho en la UI de un proyecto no se propaga solo.
+
+   ```bash
+   gh api repos/KaidevLabs/kaidev-laravel-boilerplate/rulesets/<id> > .github/rulesets/default.json
+   ```
+
 3. **Opcional: secreto `ADMIN_TOKEN`.** Solo hace falta si quieres que
    `/merge-force` pueda saltarse la protección de rama; sin él se usa el
    `GITHUB_TOKEN` normal.
