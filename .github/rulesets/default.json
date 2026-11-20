@@ -63,6 +63,10 @@
           {
             "context": "front-lint",
             "integration_id": 15368
+          },
+          {
+            "context": "phpstan",
+            "integration_id": 15368
           }
         ]
       }
