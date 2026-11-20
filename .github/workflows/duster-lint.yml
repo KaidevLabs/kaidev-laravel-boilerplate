@@ -18,11 +18,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      # The action installs PHP + Composer dependencies itself.
-      - name: 'Duster Lint'
-        uses: tighten/duster-action@v3
+      - uses: actions/checkout@v7
         with:
-          args: lint
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          coverage: none
+
+      - name: Duster Lint
+        run: |
+          version=$(php -r '$l = json_decode(file_get_contents("composer.lock"), true); foreach ($l["packages-dev"] as $p) { if ($p["name"] === "tightenco/duster") { echo $p["version"]; } }')
+          curl -fsSL "https://raw.githubusercontent.com/tighten/duster/${version}/builds/duster" -o "$RUNNER_TEMP/duster"
+          chmod +x "$RUNNER_TEMP/duster"
+          "$RUNNER_TEMP/duster" lint
