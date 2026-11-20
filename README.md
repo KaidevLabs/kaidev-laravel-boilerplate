@@ -94,6 +94,9 @@ PROYECTO=/ruta/al/proyecto-nuevo
 mkdir -p "$PROYECTO/.github"
 cp -r "$BOILERPLATE/.github/workflows" "$PROYECTO/.github/"
 
+# Composite action que comparten los workflows de PHP
+cp -r "$BOILERPLATE/.github/actions" "$PROYECTO/.github/"
+
 # Hook pre-push del proyecto y configuración de Sail de la empresa
 cp "$BOILERPLATE/scripts/pre-push.sh" "$PROYECTO/.git/hooks/pre-push"
 chmod +x "$PROYECTO/.git/hooks/pre-push"
@@ -368,6 +371,11 @@ Actions. En local, ejecuta las comprobaciones con Sail como se indica arriba.
 Los cuatro primeros se disparan con `opened`, `reopened`, `synchronize` y
 `ready_for_review`, y los cuatro admiten `workflow_dispatch` para relanzarlos a
 mano.
+
+La preparación de PHP (`setup-php`, caché de Composer y `composer install`) está
+en la composite action `.github/actions/setup-php`, que usan `front-lint`, `pest`
+y `phpstan`. Cada workflow hace `actions/checkout` antes de invocarla, porque las
+actions locales se leen del propio repositorio.
 
 ### `front-lint.yml`
 
