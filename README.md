@@ -94,6 +94,9 @@ PROYECTO=/ruta/al/proyecto-nuevo
 mkdir -p "$PROYECTO/.github"
 cp -r "$BOILERPLATE/.github/workflows" "$PROYECTO/.github/"
 
+# Composite action que comparten los workflows de PHP
+cp -r "$BOILERPLATE/.github/actions" "$PROYECTO/.github/"
+
 # Hook pre-push del proyecto y configuración de Sail de la empresa
 cp "$BOILERPLATE/scripts/pre-push.sh" "$PROYECTO/.git/hooks/pre-push"
 chmod +x "$PROYECTO/.git/hooks/pre-push"
@@ -228,6 +231,7 @@ mezclarla con el primer trabajo real.
 
 ```bash
 ./vendor/bin/sail php ./vendor/bin/duster lint  # estándar de PHP
+./vendor/bin/sail php ./vendor/bin/phpstan analyse --no-progress  # estático de PHP
 ./vendor/bin/sail npm run check                 # front: formato + lint
 ./vendor/bin/sail npm run types:check           # front: tipos (svelte-check)
 ./vendor/bin/sail test --parallel               # tests
@@ -327,6 +331,7 @@ starter no se usan.
 | Qué                      | Comando                                                                                            |
 | ------------------------ | -------------------------------------------------------------------------------------------------- |
 | Estándar de PHP          | `./vendor/bin/sail php ./vendor/bin/duster lint` / `./vendor/bin/sail php ./vendor/bin/duster fix` |
+| Análisis estático PHP    | `./vendor/bin/sail php ./vendor/bin/phpstan analyse`                                               |
 | Tests                    | `./vendor/bin/sail test --parallel`                                                                |
 | Formato y lint del front | `./vendor/bin/sail npm run check` / `./vendor/bin/sail npm run check:fix`                          |
 | Tipos del front          | `./vendor/bin/sail npm run types:check`                                                            |
@@ -339,16 +344,16 @@ Composer queda para lo suyo: instalar dependencias y ejecutar su ciclo de vida
 Composer desde el host solo hace falta para instalar Sail si el proyecto todavía
 no tiene `vendor/bin/sail`.
 
-Ojo con `./vendor/bin/sail composer lint:check`: **no** equivale a Duster. Ese
-script solo ejecuta Pint, mientras que Duster ejecuta cuatro linters (TLint,
-PHP_CodeSniffer, PHP CS Fixer y Pint). Si alguien lo lanza y sale verde, el PR
-puede seguir rojo.
+El starter traía `ci:check`, `lint` y `lint:check`; se han retirado porque no
+coincidían con nada real: `ci:check` no era el gate y los dos `lint` solo
+ejecutaban Pint, mientras que Duster ejecuta cuatro linters (TLint,
+PHP_CodeSniffer, PHP CS Fixer y Pint). En PHP el único estándar es Duster.
 
 ## Los workflows
 
 GitHub muestra cada check como `workflow / job`. Ésos son los nombres que ves en
 la UI, pero el `context` que guarda el ruleset es **solo el nombre del job**:
-`front-lint`, `duster-lint`, `Pest Tests` y `auto-merge`. Si declaras el nombre
+`front-lint`, `duster-lint`, `phpstan`, `Pest Tests` y `auto-merge`. Si declaras el nombre
 completo con el workflow, el ruleset nunca se satisface y los PRs se quedan
 bloqueados.
 
@@ -360,11 +365,17 @@ Actions. En local, ejecuta las comprobaciones con Sail como se indica arriba.
 | `front-lint.yml`  | `Front Lint / front-lint`   | PR a `dev` / `main`              |
 | `pest.yml`        | `Pest / Pest Tests`         | PR a `dev` / `main`              |
 | `duster-lint.yml` | `Duster Lint / duster-lint` | PR a `dev` / `main`              |
+| `phpstan.yml`     | `PHPStan / phpstan`         | PR a `dev` / `main`              |
 | `auto-merge.yml`  | `Auto Merge / auto-merge`   | PR, reviews, comentarios, manual |
 
-Los tres primeros se disparan con `opened`, `reopened`, `synchronize` y
-`ready_for_review`, y los tres admiten `workflow_dispatch` para relanzarlos a
+Los cuatro primeros se disparan con `opened`, `reopened`, `synchronize` y
+`ready_for_review`, y los cuatro admiten `workflow_dispatch` para relanzarlos a
 mano.
+
+La preparación de PHP (`setup-php`, caché de Composer y `composer install`) está
+en la composite action `.github/actions/setup-php`, que usan `front-lint`, `pest`
+y `phpstan`. Cada workflow hace `actions/checkout` antes de invocarla, porque las
+actions locales se leen del propio repositorio.
 
 ### `front-lint.yml`
 
@@ -404,6 +415,16 @@ construye los assets con `npm run build`, porque los tests renderizan vistas con
 instala PHP y las dependencias de Composer por su cuenta, por eso el workflow no
 tiene un step de `setup-php`. El checkout es plano a propósito: el workflow se
 puede lanzar a mano y no escribe en la rama.
+
+### `phpstan.yml`
+
+Larastan a nivel 7 sobre `app/`, `bootstrap/app.php`, `config/`, `database/` y
+`routes/` (la configuración está en `phpstan.neon`). No puede ejecutarse como un
+binario suelto al estilo de Duster: la extensión de Larastan vive en `vendor/` y
+aporta las clases que entienden Eloquent y el contenedor, así que el workflow
+hace `composer install` (con la misma caché que `pest.yml`) y después
+`vendor/bin/phpstan analyse --no-progress`. En local, el equivalente es
+`./vendor/bin/sail php ./vendor/bin/phpstan analyse`.
 
 ### `auto-merge.yml`
 
