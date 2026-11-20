@@ -27,6 +27,16 @@ fi
 
 echo "✅ Duster passed."
 
+# PHP static analysis
+echo "🔬 Running PHPStan..."
+
+if ! "$SAIL" php ./vendor/bin/phpstan analyse --no-progress; then
+    echo "❌ PHPStan failed. Please fix the reported errors before pushing."
+    exit 1
+fi
+
+echo "✅ PHPStan passed."
+
 # Frontend checks
 if [ -f "package.json" ]; then
     echo "🔗 Generating Wayfinder routes..."
