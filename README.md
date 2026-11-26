@@ -41,15 +41,15 @@ nuevos salen ya con la versión buena.
 
 | Pieza                | Versión              |
 | -------------------- | -------------------- |
-| Laravel              | 13.39                |
+| Laravel              | 13.44                |
 | PHP (local y CI)     | 8.5                  |
 | Node (CI y `.nvmrc`) | 26                   |
 | Inertia / Svelte     | Inertia 3 / Svelte 5 |
 | Tailwind CSS         | 4                    |
-| vite-plus (`vp`)     | 1.4                  |
+| vite-plus (`vp`)     | 1.8                  |
 | Duster               | 3.4                  |
 | Pest                 | 5.3                  |
-| Larastan             | 3.13                 |
+| Larastan             | 3.15                 |
 
 Base: `laravel new` con el starter de Svelte e Inertia.
 
